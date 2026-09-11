@@ -1,0 +1,108 @@
+=== Defect 1: Permission (GET /me/earnings) ===
+
+--- BEFORE FIX: learner token gets 200 instead of 403 ---
+curl -i http://localhost:8080/wp-json/bemalearn/v1/me/earnings \
+  -H "Authorization: Bearer <learner token>"
+
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=UTF-8
+
+{"availableMinor":0,"pendingMinor":0,"currency":"NGN","minimumWithdrawalMinor":50000,"lastWithdrawalAt":null}
+
+--- AFTER FIX: learner token now correctly gets 403 ---
+curl -i http://localhost:8080/wp-json/bemalearn/v1/me/earnings \
+  -H "Authorization: Bearer <learner token>"
+
+HTTP/1.1 403 Forbidden
+Content-Type: application/json; charset=UTF-8
+
+{"code":"forbidden","message":"Instructors only.","data":{"status":403}}
+
+--- AFTER FIX: instructor token still works correctly ---
+curl -i http://localhost:8080/wp-json/bemalearn/v1/me/earnings \
+  -H "Authorization: Bearer <instructor token>"
+
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=UTF-8
+
+{"availableMinor":128500,"pendingMinor":45000,"currency":"NGN","minimumWithdrawalMinor":50000,"lastWithdrawalAt":null}
+
+FIX: wordpress-plugin/includes/class-bl-earnings-controller.php
+The /me/earnings route used check_authenticated as its permission_callback,
+which only checks that a request is signed in, not which role the signed-in
+user has. Changed check_authenticated to check_instructor.
+
+
+=== Defect 2: API contract (GET /courses returns unpublished rows) ===
+
+--- BEFORE FIX: unpublished course present in public list ---
+curl -s http://localhost:8080/wp-json/bemalearn/v1/courses | grep -o '"isPublished":false'
+
+"isPublished":false
+
+--- AFTER FIX: no unpublished course in the response ---
+curl -s http://localhost:8080/wp-json/bemalearn/v1/courses | grep -o '"isPublished":false'
+
+(no output - nothing matched, meaning no unpublished course is returned)
+
+FIX: wordpress-plugin/includes/class-bl-courses-controller.php
+The get_courses() SQL query had no WHERE clause, so it returned every course
+regardless of publish status. Added WHERE c.is_published = 1.
+
+
+=== Defect 3: Schema mismatch (GET /courses/1 lessonCount always 0) ===
+
+--- BEFORE FIX: lessonCount shows 0 despite 12 lessons in seed data ---
+curl -s http://localhost:8080/wp-json/bemalearn/v1/courses/1 | grep -o '"lessonCount":[0-9]*'
+
+"lessonCount":0
+
+--- AFTER FIX: lessonCount now correctly shows 12 ---
+curl -s http://localhost:8080/wp-json/bemalearn/v1/courses/1 | grep -o '"lessonCount":[0-9]*'
+
+"lessonCount":12
+
+FIX: wordpress-plugin/includes/class-bl-courses-controller.php
+get_course() read $row->lessons_total, a column that does not exist in the
+database. The real column, created in the migration, is lesson_count. Since
+PHP silently returns null for a missing property, the ?? 0 fallback always
+fired and lessonCount was always 0 regardless of the real value. Changed
+lessons_total to lesson_count.
+
+
+=== Defect 4: Validation (POST /me/withdrawals ignores minimum) ===
+
+--- BEFORE FIX: withdrawal of 1000 (below the 50000 minimum) succeeded ---
+curl -i -X POST http://localhost:8080/wp-json/bemalearn/v1/me/withdrawals \
+  -H "Authorization: Bearer <instructor token>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: test-below-min-1" \
+  -d '{"amountMinor": 1000, "payoutReference": "test-below-min-1"}'
+
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=UTF-8
+
+{"id":1,"amountMinor":1000,"status":"pending","payoutReference":"test-below-min-1","createdAt":"2026-09-11T21:30:12+00:00"}
+
+--- AFTER FIX: same attempt (fresh reference) now correctly refused ---
+curl -i -X POST http://localhost:8080/wp-json/bemalearn/v1/me/withdrawals \
+  -H "Authorization: Bearer <instructor token>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: test-below-min-2" \
+  -d '{"amountMinor": 1000, "payoutReference": "test-below-min-2"}'
+
+HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json; charset=UTF-8
+
+{"code":"below_minimum","message":"The requested amount is below the minimum withdrawal.","data":{"status":422}}
+
+FIX: wordpress-plugin/includes/class-bl-earnings-controller.php
+create_withdrawal() checked insufficient_balance and withdrawal_in_progress
+but never compared amountMinor against MINIMUM_WITHDRAWAL_MINOR, so
+below_minimum, a documented business rule, was never enforced. Added a
+check for amount < self::MINIMUM_WITHDRAWAL_MINOR before the existing
+balance check, returning 422 below_minimum.
+
+Note: the BEFORE-fix test above created a real pending withdrawal (id 1) in
+the database before the fix was applied. Reset seed data with
+`wp bemalearn reset` before starting Task 1-3 so the frontend starts clean.

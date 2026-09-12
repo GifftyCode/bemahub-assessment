@@ -1,0 +1,10 @@
+=== Successful run ===
+instructor_id,total_net_minor
+7,84750
+9,79700
+11,30000
+exit code: 0
+
+=== Missing file run ===
+error: could not read 'does_not_exist.json': [Errno 2] No such file or directory: 'does_not_exist.json'
+exit code: 2

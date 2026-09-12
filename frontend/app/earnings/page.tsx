@@ -2,10 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import axios from "axios";
-import Link from "next/link";
 import api from "@/lib/api/client";
 import { useAuthStore } from "@/lib/auth/authStore";
 import { StatusMessage } from "@/components/StatusMessage";
+import { WithdrawalForm } from "@/components/WithdrawalForm";
 import { formatMoney } from "@/lib/format";
 import type { Earnings } from "@/lib/types/api";
 
@@ -111,15 +111,15 @@ export default function EarningsPage() {
         </div>
         <div>
           <dt className="text-slate-500">Last withdrawal</dt>
-          <dd className="text-slate-700">
-            {earnings.lastWithdrawalAt ?? "—"}
-          </dd>
+          <dd className="text-slate-700">{earnings.lastWithdrawalAt ?? "—"}</dd>
         </div>
       </dl>
 
-      <Link href="/withdrawals" className="text-sm text-slate-600 underline">
-        Request a withdrawal →
-      </Link>
+      <WithdrawalForm
+        minimumMinor={earnings.minimumWithdrawalMinor}
+        availableMinor={earnings.availableMinor}
+        currency={earnings.currency}
+      />
     </div>
   );
 }
